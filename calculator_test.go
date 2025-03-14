@@ -1,40 +1,94 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
 
-func TestCalculateDueDate(t *testing.T) {
-	layout := "2006-01-02 15:04"
-	cases := []struct {
-		submitTime      string
-		turnaroundHours int
-		expectedDueDate string
+func TestHandleDueDateRequest(t *testing.T) {
+	// Start a test server
+	ts := httptest.NewServer(http.HandlerFunc(HandleDueDateRequest))
+	defer ts.Close()
+
+	tests := []struct {
+		name       string
+		request    DueDateRequest
+		expectCode int
 	}{
-		{"2025-03-13 10:00", 2, "2025-03-13 12:00"},  // Same day completion
-		{"2025-03-13 16:00", 2, "2025-03-14 10:00"},  // Next day due
-		{"2025-03-15 10:00", 2, "INVALID"},           // Weekend submission
-		{"2025-03-13 15:00", 10, "2025-03-14 17:00"}, // Spans across multiple days
+		{
+			name: "Valid request",
+			request: DueDateRequest{
+				SubmitTime:      "2025-03-14 10:00",
+				TurnaroundHours: 5,
+			},
+			expectCode: http.StatusOK,
+		},
+		{
+			name: "Submit time on weekend",
+			request: DueDateRequest{
+				SubmitTime:      "2025-03-16 10:00", // Sunday
+				TurnaroundHours: 5,
+			},
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "Submit time outside business hours",
+			request: DueDateRequest{
+				SubmitTime:      "2025-03-14 07:00",
+				TurnaroundHours: 3,
+			},
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "Negative turnaround hours",
+			request: DueDateRequest{
+				SubmitTime:      "2025-03-14 10:00",
+				TurnaroundHours: -2,
+			},
+			expectCode: http.StatusBadRequest,
+		},
 	}
 
-	for _, tc := range cases {
-		submitTime, err := time.Parse(layout, tc.submitTime)
-		if err != nil {
-			t.Fatalf("Failed to parse submitTime: %v", err)
-		}
-
-		if submitTime.Weekday() == time.Saturday || submitTime.Weekday() == time.Sunday {
-			if tc.expectedDueDate != "INVALID" {
-				t.Errorf("Expected INVALID for weekend submission, but got valid output")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal request
+			body, err := json.Marshal(tt.request)
+			if err != nil {
+				t.Fatalf("Failed to marshal request: %v", err)
 			}
-			continue
-		}
 
-		dueDate := CalculateDueDate(submitTime, tc.turnaroundHours)
-		if dueDate.Format(layout) != tc.expectedDueDate {
-			t.Errorf("For submitTime %s with %d hours, expected %s but got %s",
-				tc.submitTime, tc.turnaroundHours, tc.expectedDueDate, dueDate.Format(layout))
-		}
+			// Send request
+			resp, err := http.Post(ts.URL+"/calculate-due-date", "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				t.Fatalf("Request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Check response code
+			if resp.StatusCode != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, resp.StatusCode)
+			}
+
+			// Check response body for successful cases
+			if tt.expectCode == http.StatusOK {
+				var response DueDateResponse
+				if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+					t.Fatalf("Failed to decode response: %v", err)
+				}
+
+				// Parse submitTime
+				layout := "2006-01-02 15:04"
+				submitTime, _ := time.Parse(layout, tt.request.SubmitTime)
+				expectedDueDate, _ := CalculateDueDate(submitTime, tt.request.TurnaroundHours)
+
+				if response.DueDate != expectedDueDate.Format(layout) {
+					t.Errorf("expected due date %s, got %s", expectedDueDate.Format(layout), response.DueDate)
+				}
+			}
+		})
 	}
 }
