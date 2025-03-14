@@ -112,7 +112,10 @@ func HandleDueDateRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Set response header and send JSON response
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+	}
 }
 
 // Start the HTTP server
