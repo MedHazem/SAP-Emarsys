@@ -1,0 +1,8 @@
+replicaCount: 3
+image:
+  repository: gcr.io/my-gcp-project/calculator
+  tag: latest
+  pullPolicy: Always
+service:
+  type: LoadBalancer
+  port: 80
